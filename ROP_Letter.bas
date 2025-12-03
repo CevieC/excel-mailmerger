@@ -163,10 +163,9 @@ End Sub
 ' Helper: builds the multi-line block for new/old policies
 Private Function BuildPoliciesBlock(ByVal header As String, ByVal dict As Object) As String
     Dim result As String
-    Dim keys As Variant
-    Dim i As Long
-    Dim pol As String
+    Dim pol As Variant
     Dim desc As String
+    Dim firstItem As Boolean
     
     If dict Is Nothing Then
         BuildPoliciesBlock = vbNullString
@@ -179,21 +178,28 @@ Private Function BuildPoliciesBlock(ByVal header As String, ByVal dict As Object
     End If
     
     result = header & vbLf
+    firstItem = True
     
-    keys = dict.Keys
-    For i = 0 To UBound(keys)
-        pol = CStr(keys(i))
-        desc = CStr(dict(pol))
+    For Each pol In dict.Keys
+        If Not firstItem Then
+            result = result & vbLf
+        End If
         
-        result = result & pol
+        On Error Resume Next
+        desc = CStr(dict(pol))
+        If Err.Number <> 0 Then
+            desc = ""
+            Err.Clear
+        End If
+        On Error GoTo 0
+        
+        result = result & CStr(pol)
         If Len(desc) > 0 Then
             result = result & " (" & desc & ")"
         End If
         
-        If i < UBound(keys) Then
-            result = result & vbLf
-        End If
-    Next i
+        firstItem = False
+    Next pol
     
     BuildPoliciesBlock = result
 End Function
