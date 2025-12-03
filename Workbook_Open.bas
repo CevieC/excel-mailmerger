@@ -55,39 +55,15 @@ Private Sub Workbook_Open()
     Set wsSrc = wbSrc.Sheets(1)
     Set wsDest = ThisWorkbook.Sheets(DEST_SHEET)
 
-    ' Clear destination sheet & copy filtered rows
+    ' Clear destination sheet & copy everything
     wsDest.Cells.Clear
-    
-    ' Copy header row first (assumes row 1 is headers)
-    wsSrc.Rows(1).Copy wsDest.Rows(1)
-    
+    wsSrc.UsedRange.Copy wsDest.Range("A1")
+
     ' Copy column widths too (to keep formatting)
     CopyColumnWidths wsSrc, wsDest
-    
-    ' Filter and copy data rows where Col P = "FA" AND Col AS = "A"
-    Dim srcLastRow As Long
-    Dim srcRow As Long
-    Dim destRow As Long
-    Dim colP As Long
-    Dim colAS As Long
-    
-    colP = 16   ' Column P
-    colAS = 45  ' Column AS
-    
-    srcLastRow = wsSrc.Cells(wsSrc.Rows.Count, 1).End(xlUp).Row
-    destRow = 2 ' Start pasting data from row 2 (after headers)
-    
-    For srcRow = 2 To srcLastRow ' Start from row 2 (skip headers)
-        If wsSrc.Cells(srcRow, colP).Value = "FA" And _
-           wsSrc.Cells(srcRow, colAS).Value = "A" Then
-            
-            wsSrc.Rows(srcRow).Copy wsDest.Rows(destRow)
-            destRow = destRow + 1
-        End If
-    Next srcRow
-    
-    ' How many rows loaded (including header)?
-    rowsLoaded = destRow - 1 ' Subtract 1 because destRow is now pointing to next empty row
+
+    ' How many rows loaded?
+    rowsLoaded = wsDest.UsedRange.Rows.Count
 
     ' Close source without saving
     wbSrc.Close SaveChanges:=False
