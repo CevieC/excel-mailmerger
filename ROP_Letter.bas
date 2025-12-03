@@ -125,8 +125,49 @@ Public Sub BuildROPStaging()
     
     For Each k In master.Keys
         Set info = master(k)
-        Set oldDict = info("OldDict")
-        Set newDict = info("NewDict")
+        
+        ' Verify info is a valid Dictionary before proceeding
+        If info Is Nothing Then
+            MsgBox "Error: Invalid dictionary reference for key: " & CStr(k), vbCritical
+            Exit Sub
+        End If
+        
+        ' Retrieve dictionary objects - use variant to safely retrieve
+        On Error Resume Next
+        Err.Clear
+        
+        Dim vOld As Variant
+        Dim vNew As Variant
+        
+        ' Retrieve OldDict - get as variant first, then check type
+        Set oldDict = Nothing
+        If info.Exists("OldDict") Then
+            vOld = info("OldDict")
+            If Err.Number = 0 And IsObject(vOld) Then
+                Set oldDict = vOld
+            Else
+                Err.Clear
+                Set oldDict = CreateObject("Scripting.Dictionary")
+            End If
+        Else
+            Set oldDict = CreateObject("Scripting.Dictionary")
+        End If
+        
+        ' Retrieve NewDict - get as variant first, then check type
+        Set newDict = Nothing
+        If info.Exists("NewDict") Then
+            vNew = info("NewDict")
+            If Err.Number = 0 And IsObject(vNew) Then
+                Set newDict = vNew
+            Else
+                Err.Clear
+                Set newDict = CreateObject("Scripting.Dictionary")
+            End If
+        Else
+            Set newDict = CreateObject("Scripting.Dictionary")
+        End If
+        
+        On Error GoTo ErrHandler
         
         wsStg.Cells(outRow, "A").Value = info("Agent")
         wsStg.Cells(outRow, "B").Value = info("NRIC")
