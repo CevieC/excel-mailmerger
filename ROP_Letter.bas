@@ -2,7 +2,7 @@ Option Explicit
 
 ' Build / refresh the ROP staging sheet from the raw ROP data
 Public Sub BuildROPStaging()
-    Const SRC_SHEET As String = "Data"       
+    Const SRC_SHEET As String = "Data"
     Const STAGING_SHEET As String = "ROP_Letter"
     
     Dim wsSrc As Worksheet
@@ -10,20 +10,25 @@ Public Sub BuildROPStaging()
     Dim lastRow As Long
     Dim r As Long
     
-    Dim master As Object        ' Scripting.Dictionary (key: Agent||NRIC, item: info dict)
-    Dim info As Object          ' per-key dictionary
-    Dim oldDict As Object       ' dict of old policies for this key
-    Dim newDict As Object       ' dict of new policies for this key
+    Dim master As Object        ' Scripting.Dictionary (key: Policy Owner ID, item: info dict)
+    Dim info As Object          ' per-client dictionary
+    Dim oldPolicies As Object   ' dict of old policies (key: Policy No, item: Policy Name)
+    Dim newPolicies As Object   ' dict of new policies (key: Policy No, item: Policy Name)
     
-    Dim key As String
-    Dim agentName As String
-    Dim nric As String
-    Dim laName As String
-    Dim oldPol As String, oldDesc As String
-    Dim newPol As String, newDesc As String
+    Dim policyOwnerID As String
+    Dim policyOwnerName As String
+    Dim insuredName As String
+    Dim insuredID As String
+    Dim advisorName As String
+    Dim advisorCode As String
+    Dim oldPolNo As String
+    Dim oldPolName As String
+    Dim newPolNo As String
+    Dim newPolName As String
     
     Dim outRow As Long
     Dim k As Variant
+    Dim pol As Variant
     
     On Error GoTo ErrHandler
     
@@ -38,8 +43,8 @@ Public Sub BuildROPStaging()
         Exit Sub
     End If
     
-    ' Determine last row based on Agent Name column (BF)
-    lastRow = wsSrc.Cells(wsSrc.Rows.Count, "BF").End(xlUp).Row
+    ' Determine last row based on Policy Owner ID column (D)
+    lastRow = wsSrc.Cells(wsSrc.Rows.Count, "D").End(xlUp).Row
     If lastRow < 2 Then
         MsgBox "No data found in sheet '" & SRC_SHEET & "'.", vbInformation, "Build ROP Staging"
         Exit Sub
@@ -58,63 +63,70 @@ Public Sub BuildROPStaging()
     ' Clear staging sheet and set headers
     With wsStg
         .Cells.Clear
-        .Range("A1").Value = "Agent Name"
-        .Range("B1").Value = "Life Assured NRIC"
-        .Range("C1").Value = "Life Assured Name"
-        .Range("D1").Value = "Count New Policies"
-        .Range("E1").Value = "Count Old Policies"
-        .Range("F1").Value = "New Policies Block"
-        .Range("G1").Value = "Old Policies Block"
+        .Range("A1").Value = "Policy Owner Name"
+        .Range("B1").Value = "Policy Owner ID"
+        .Range("C1").Value = "Insured Name"
+        .Range("D1").Value = "Insured ID"
+        .Range("E1").Value = "Producing Advisor Name"
+        .Range("F1").Value = "Producing Advisor Code"
+        .Range("G1").Value = "OLD Policies"
+        .Range("H1").Value = "OLD Policy Count"
+        .Range("I1").Value = "NEW Policies"
+        .Range("J1").Value = "NEW Policy Count"
     End With
     
-    ' Build master dictionary
+    ' Build master dictionary grouped by Policy Owner ID
     Set master = CreateObject("Scripting.Dictionary")
     
     Application.ScreenUpdating = False
     
     For r = 2 To lastRow
-        agentName = Trim(wsSrc.Cells(r, "BF").Value)   ' Agent Name
-        nric = Trim(wsSrc.Cells(r, "B").Value)         ' NRIC
-        laName = Trim(wsSrc.Cells(r, "A").Value)       ' Life Assured Name
+        policyOwnerID = Trim(CStr(wsSrc.Cells(r, "D").Value))   ' Policy Owner ID (unique identifier)
         
-        ' Only process rows with agent + NRIC
-        If agentName <> "" And nric <> "" Then
-            key = agentName & "||" & nric
-            
-            ' Create per-key info dict if new
-            If Not master.Exists(key) Then
+        ' Only process rows with Policy Owner ID
+        If policyOwnerID <> "" Then
+            ' Create per-client info dict if new
+            If Not master.Exists(policyOwnerID) Then
                 Set info = CreateObject("Scripting.Dictionary")
-                info("Agent") = agentName
-                info("NRIC") = nric
-                info("Name") = laName
                 
-                Set oldDict = CreateObject("Scripting.Dictionary")
-                Set newDict = CreateObject("Scripting.Dictionary")
-                info("OldDict") = oldDict
-                info("NewDict") = newDict
+                ' Store basic info (from first occurrence of this Policy Owner ID)
+                info("PolicyOwnerName") = Trim(CStr(wsSrc.Cells(r, "C").Value))
+                info("PolicyOwnerID") = policyOwnerID
+                info("InsuredName") = Trim(CStr(wsSrc.Cells(r, "A").Value))
+                info("InsuredID") = Trim(CStr(wsSrc.Cells(r, "B").Value))
+                info("AdvisorName") = Trim(CStr(wsSrc.Cells(r, "V").Value))
+                info("AdvisorCode") = Trim(CStr(wsSrc.Cells(r, "S").Value))
                 
-                master.Add key, info
+                ' Create dictionaries for policies
+                Set oldPolicies = CreateObject("Scripting.Dictionary")
+                Set newPolicies = CreateObject("Scripting.Dictionary")
+                
+                ' Store policy dictionaries in info dict
+                Set info("OldPolicies") = oldPolicies
+                Set info("NewPolicies") = newPolicies
+                
+                master.Add policyOwnerID, info
             Else
-                Set info = master(key)
-                Set oldDict = info("OldDict")
-                Set newDict = info("NewDict")
+                Set info = master(policyOwnerID)
+                Set oldPolicies = info("OldPolicies")
+                Set newPolicies = info("NewPolicies")
             End If
             
-            ' Old policy for this row
-            oldPol = Trim(wsSrc.Cells(r, "F").Value)   ' Old Policy No
-            oldDesc = Trim(wsSrc.Cells(r, "O").Value)  ' Old Policy Desc
-            If oldPol <> "" Then
-                If Not oldDict.Exists(oldPol) Then
-                    oldDict.Add oldPol, oldDesc
+            ' Collect OLD policy for this row
+            oldPolNo = Trim(CStr(wsSrc.Cells(r, "AM").Value))   ' OLD Policy No
+            oldPolName = Trim(CStr(wsSrc.Cells(r, "AV").Value))  ' OLD Policy Name
+            If oldPolNo <> "" Then
+                If Not oldPolicies.Exists(oldPolNo) Then
+                    oldPolicies.Add oldPolNo, oldPolName
                 End If
             End If
             
-            ' New policy for this row
-            newPol = Trim(wsSrc.Cells(r, "AM").Value)   ' New Policy No
-            newDesc = Trim(wsSrc.Cells(r, "AV").Value)  ' New Policy Desc
-            If newPol <> "" Then
-                If Not newDict.Exists(newPol) Then
-                    newDict.Add newPol, newDesc
+            ' Collect NEW policy for this row
+            newPolNo = Trim(CStr(wsSrc.Cells(r, "F").Value))    ' NEW Policy No
+            newPolName = Trim(CStr(wsSrc.Cells(r, "O").Value))  ' NEW Policy Name
+            If newPolNo <> "" Then
+                If Not newPolicies.Exists(newPolNo) Then
+                    newPolicies.Add newPolNo, newPolName
                 End If
             End If
         End If
@@ -126,72 +138,41 @@ Public Sub BuildROPStaging()
     For Each k In master.Keys
         Set info = master(k)
         
-        ' Verify info is a valid Dictionary before proceeding
-        If info Is Nothing Then
-            MsgBox "Error: Invalid dictionary reference for key: " & CStr(k), vbCritical
-            Exit Sub
-        End If
-        
-        ' Retrieve dictionary objects - use variant to safely retrieve
+        ' Retrieve policy dictionaries
         On Error Resume Next
-        Err.Clear
-        
-        Dim vOld As Variant
-        Dim vNew As Variant
-        
-        ' Retrieve OldDict - get as variant first, then check type
-        Set oldDict = Nothing
-        If info.Exists("OldDict") Then
-            vOld = info("OldDict")
-            If Err.Number = 0 And IsObject(vOld) Then
-                Set oldDict = vOld
-            Else
-                Err.Clear
-                Set oldDict = CreateObject("Scripting.Dictionary")
-            End If
-        Else
-            Set oldDict = CreateObject("Scripting.Dictionary")
-        End If
-        
-        ' Retrieve NewDict - get as variant first, then check type
-        Set newDict = Nothing
-        If info.Exists("NewDict") Then
-            vNew = info("NewDict")
-            If Err.Number = 0 And IsObject(vNew) Then
-                Set newDict = vNew
-            Else
-                Err.Clear
-                Set newDict = CreateObject("Scripting.Dictionary")
-            End If
-        Else
-            Set newDict = CreateObject("Scripting.Dictionary")
-        End If
-        
+        Set oldPolicies = info("OldPolicies")
+        Set newPolicies = info("NewPolicies")
         On Error GoTo ErrHandler
         
-        wsStg.Cells(outRow, "A").Value = info("Agent")
-        wsStg.Cells(outRow, "B").Value = info("NRIC")
-        wsStg.Cells(outRow, "C").Value = info("Name")
+        ' Write basic info
+        wsStg.Cells(outRow, "A").Value = info("PolicyOwnerName")
+        wsStg.Cells(outRow, "B").Value = info("PolicyOwnerID")
+        wsStg.Cells(outRow, "C").Value = info("InsuredName")
+        wsStg.Cells(outRow, "D").Value = info("InsuredID")
+        wsStg.Cells(outRow, "E").Value = info("AdvisorName")
+        wsStg.Cells(outRow, "F").Value = info("AdvisorCode")
         
-        wsStg.Cells(outRow, "D").Value = newDict.Count
-        wsStg.Cells(outRow, "E").Value = oldDict.Count
+        ' Build OLD Policies block
+        wsStg.Cells(outRow, "G").Value = BuildPoliciesBlock(oldPolicies)
+        wsStg.Cells(outRow, "H").Value = oldPolicies.Count
         
-        wsStg.Cells(outRow, "F").Value = BuildPoliciesBlock("New Policies:", newDict)
-        wsStg.Cells(outRow, "G").Value = BuildPoliciesBlock("Old Policies:", oldDict)
+        ' Build NEW Policies block
+        wsStg.Cells(outRow, "I").Value = BuildPoliciesBlock(newPolicies)
+        wsStg.Cells(outRow, "J").Value = newPolicies.Count
         
         outRow = outRow + 1
     Next k
     
     ' Format staging sheet
     With wsStg
-        .Columns("A:G").EntireColumn.AutoFit
-        .Columns("F:G").WrapText = True
+        .Columns("A:J").EntireColumn.AutoFit
+        .Columns("G:I").WrapText = True
         .Rows("1:1").Font.Bold = True
     End With
     
     Application.ScreenUpdating = True
     
-    MsgBox "ROP staging build complete. " & (outRow - 2) & " agent/NRIC combinations processed.", _
+    MsgBox "ROP staging build complete. " & (outRow - 2) & " unique clients processed.", _
            vbInformation, "Build ROP Staging"
     
     Exit Sub
@@ -201,11 +182,11 @@ ErrHandler:
     MsgBox "Error while building ROP staging: " & Err.Description, vbCritical, "Build ROP Staging"
 End Sub
 
-' Helper: builds the multi-line block for new/old policies
-Private Function BuildPoliciesBlock(ByVal header As String, ByVal dict As Object) As String
+' Helper: builds the multi-line block for policies (format: <Policy Number> <Policy Name>)
+Private Function BuildPoliciesBlock(ByVal dict As Object) As String
     Dim result As String
     Dim pol As Variant
-    Dim desc As String
+    Dim polName As String
     Dim firstItem As Boolean
     
     If dict Is Nothing Then
@@ -218,7 +199,7 @@ Private Function BuildPoliciesBlock(ByVal header As String, ByVal dict As Object
         Exit Function
     End If
     
-    result = header & vbLf
+    result = ""
     firstItem = True
     
     For Each pol In dict.Keys
@@ -227,16 +208,17 @@ Private Function BuildPoliciesBlock(ByVal header As String, ByVal dict As Object
         End If
         
         On Error Resume Next
-        desc = CStr(dict(pol))
+        polName = CStr(dict(pol))
         If Err.Number <> 0 Then
-            desc = ""
+            polName = ""
             Err.Clear
         End If
         On Error GoTo 0
         
+        ' Format: <Policy Number> <Policy Name>
         result = result & CStr(pol)
-        If Len(desc) > 0 Then
-            result = result & " (" & desc & ")"
+        If Len(polName) > 0 Then
+            result = result & " " & polName
         End If
         
         firstItem = False
@@ -244,3 +226,4 @@ Private Function BuildPoliciesBlock(ByVal header As String, ByVal dict As Object
     
     BuildPoliciesBlock = result
 End Function
+
