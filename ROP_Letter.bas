@@ -60,20 +60,12 @@ Public Sub BuildROPStaging()
         wsStg.Name = STAGING_SHEET
     End If
     
-    ' Clear staging sheet and set headers
-    With wsStg
-        .Cells.Clear
-        .Range("A1").Value = "Policy Owner Name"
-        .Range("B1").Value = "Policy Owner ID"
-        .Range("C1").Value = "Insured Name"
-        .Range("D1").Value = "Insured ID"
-        .Range("E1").Value = "Producing Advisor Name"
-        .Range("F1").Value = "Producing Advisor Code"
-        .Range("G1").Value = "OLD Policies"
-        .Range("H1").Value = "OLD Policy Count"
-        .Range("I1").Value = "NEW Policies"
-        .Range("J1").Value = "NEW Policy Count"
-    End With
+    ' Clear only data rows (row 2 onwards) in columns A to J, preserving headers and columns after J
+    Dim lastStgRow As Long
+    lastStgRow = wsStg.Cells(wsStg.Rows.Count, "A").End(xlUp).Row
+    If lastStgRow >= 2 Then
+        wsStg.Range("A2:J" & lastStgRow).Clear
+    End If
     
     ' Build master dictionary grouped by Policy Owner ID
     Set master = CreateObject("Scripting.Dictionary")
