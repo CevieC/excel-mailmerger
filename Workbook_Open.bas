@@ -163,3 +163,17 @@ Private Function SelectAGTAFile(ByRef agtaPath As String, ByRef agtaName As Stri
 
     SelectAGTAFile = True
 End Function
+
+' =PROPER(
+'    TRIM(
+' TEXTJOIN(
+'      " ",
+' TRUE,
+' IF(
+' ISNUMBER(MATCH(MID(IFERROR(TEXTBEFORE(A2,"("),A2),ROW(INDIRECT("1:"&LEN(A2))),1),
+' CHAR(ROW(65:90)),"")), 1),
+' MID(IFERROR(TEXTBEFORE(A2,"("),A2),ROW(INDIRECT("1:"&LEN(A2))),1),
+' " "
+' )
+' )
+' )
