@@ -1,6 +1,6 @@
 Option Explicit
 
-Sub MergeToPDFs_ByStatusAndChannel()
+Sub MergeToPDFs()
 
     Dim mainDoc As Document
     Dim mm As MailMerge
