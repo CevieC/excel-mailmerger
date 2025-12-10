@@ -1,16 +1,20 @@
 Option Explicit
 
-' ==== CONFIG ====
-Private Const ROOT_PATH As String = "C:\ROP_Letters"   ' <-- change this
-Private Const FIELD_QUARTER As String = "Quarter"
-Private Const FIELD_STATUS As String = "Active_Status"
-Private Const FIELD_CHANNEL As String = "Channel_Folder"
-Private Const FIELD_ADVISOR As String = "Producing_Advisor_Name"
+' ==== CONFIG - EDIT THESE ====
+Private Const ROOT_PATH As String = "C:\ROP_Letters"                   ' PDF root folder
+Private Const EXCEL_FILE_PATH As String = "C:\Path\To\WorkbookA.xlsx"  ' <-- set to your ROP workbook
 
+' Mail merge field names (must match ROP Letter headers)
+Private Const FIELD_QUARTER As String = "Quarter"
+Private Const FIELD_STATUS As String = "Active Status"
+Private Const FIELD_CHANNEL As String = "Channel Folder"
+Private Const FIELD_ADVISOR As String = "Producing Advisor Name"
+
+' Excel sheet + header name
 Private Const EXCEL_SHEET_NAME As String = "ROP Letter"
 Private Const EXCEL_PDF_HEADER As String = "PDF Path"
 
-Public Sub LettersToPDF()
+Public Sub GenerateROPLettersToPDF()
     Dim docMain As Document, docNew As Document
     Dim mm As MailMerge, ds As MailMergeDataSource
     Dim fso As Object, counter As Object
@@ -18,9 +22,9 @@ Public Sub LettersToPDF()
     Dim q As String, s As String, ch As String, adv As String
     Dim folderPath As String, pdfName As String, pdfFullPath As String
     
-    Dim xlApp As Object, wb As Object, wb2 As Object, ws As Object
+    Dim xlApp As Object, wb As Object, ws As Object
     Dim pdfCol As Long, lastCol As Long, rowExcel As Long
-    Dim fileName As String
+    Dim wbName As String
     
     On Error GoTo ErrHandler
     
@@ -36,30 +40,41 @@ Public Sub LettersToPDF()
     Set fso = CreateObject("Scripting.FileSystemObject")
     Set counter = CreateObject("Scripting.Dictionary")
     
-    ' --- Try to hook Excel for logging (optional) ---
+    ' ==== Connect to Excel workbook by path ====
     Set xlApp = Nothing: Set wb = Nothing: Set ws = Nothing
-    On Error Resume Next
-    Set xlApp = GetObject(, "Excel.Application")
-    On Error GoTo ErrHandler
-    
-    If Not xlApp Is Nothing And ds.DataFiles.Count > 0 Then
-        fileName = Dir(ds.DataFiles(1)) ' just "WorkbookA.xlsx"
-        For Each wb2 In xlApp.Workbooks
-            If StrComp(wb2.Name, fileName, vbTextCompare) = 0 Then
-                Set wb = wb2
-                Exit For
-            End If
-        Next wb2
+    If EXCEL_FILE_PATH <> "" Then
+        wbName = Dir$(EXCEL_FILE_PATH)   ' e.g. "WorkbookA.xlsx"
         
-        If Not wb Is Nothing Then
+        On Error Resume Next
+        Set xlApp = GetObject(, "Excel.Application")
+        If xlApp Is Nothing Then Set xlApp = CreateObject("Excel.Application")
+        On Error GoTo ErrHandler
+        
+        If Not xlApp Is Nothing Then
+            ' Try to use already-open workbook
+            Dim wb2 As Object
+            For Each wb2 In xlApp.Workbooks
+                If StrComp(wb2.Name, wbName, vbTextCompare) = 0 Then
+                    Set wb = wb2
+                    Exit For
+                End If
+            Next wb2
+            
+            ' If not open, open it
+            If wb Is Nothing Then
+                Set wb = xlApp.Workbooks.Open(EXCEL_FILE_PATH)
+            End If
+            
+            ' Get the ROP Letter sheet
             On Error Resume Next
             Set ws = wb.Worksheets(EXCEL_SHEET_NAME)
             On Error GoTo ErrHandler
             
+            ' Ensure PDF Path column exists
             If Not ws Is Nothing Then
-                lastCol = ws.Cells(1, ws.Columns.Count).End(-4159).Column ' xlToLeft
+                lastCol = ws.Cells(1, ws.Columns.Count).End(-4159).Column ' -4159 = xlToLeft
                 For pdfCol = 1 To lastCol
-                    If Trim(CStr(ws.Cells(1, pdfCol).Value)) = EXCEL_PDF_HEADER Then Exit For
+                    If Trim$(CStr(ws.Cells(1, pdfCol).Value)) = EXCEL_PDF_HEADER Then Exit For
                 Next pdfCol
                 If pdfCol > lastCol Then
                     pdfCol = lastCol + 1
@@ -78,6 +93,7 @@ Public Sub LettersToPDF()
         For i = 1 To ds.RecordCount
             ds.ActiveRecord = i
             
+            ' --- read fields ---
             q = CleanText(FieldVal(ds, FIELD_QUARTER))
             s = CleanText(FieldVal(ds, FIELD_STATUS))
             ch = CleanText(FieldVal(ds, FIELD_CHANNEL))
@@ -88,6 +104,7 @@ Public Sub LettersToPDF()
             If ch = "" Then ch = "Unknown Channel"
             If adv = "" Then adv = "Unknown Advisor"
             
+            ' --- numbering per advisor+quarter+status+channel ---
             key = q & "|" & s & "|" & ch & "|" & adv
             If counter.Exists(key) Then
                 idx = counter(key) + 1
@@ -96,14 +113,15 @@ Public Sub LettersToPDF()
             End If
             counter(key) = idx
             
-            folderPath = ROOT_PATH & "\" & _
-                         SafePart(q) & "\" & SafePart(s) & "\" & SafePart(ch)
+            ' --- folder + filename ---
+            folderPath = ROOT_PATH & "\" & SafePart(q) & "\" & SafePart(s) & "\" & SafePart(ch)
             EnsureFolder fso, folderPath
             
             pdfName = ch & " ROP Letter for " & q & " - " & adv & " " & idx & ".pdf"
             pdfName = SafeName(pdfName)
             pdfFullPath = folderPath & "\" & pdfName
             
+            ' --- merge this one record to new doc ---
             .DataSource.FirstRecord = i
             .DataSource.LastRecord = i
             .Execute Pause:=False
@@ -113,7 +131,7 @@ Public Sub LettersToPDF()
             docNew.Close False
             docMain.Activate
             
-            ' log back to Excel if possible
+            ' --- log into Excel: record i => row i+1 ---
             If Not ws Is Nothing Then
                 rowExcel = i + 1          ' record 1 -> row 2
                 ws.Cells(rowExcel, pdfCol).Value = pdfFullPath
@@ -132,7 +150,7 @@ ErrHandler:
     MsgBox "Error: " & Err.Description, vbCritical
 End Sub
 
-' ----- helpers (short + shared) -----
+' ===== Helpers =====
 
 Private Function FieldVal(ds As MailMergeDataSource, name As String) As String
     On Error Resume Next
@@ -149,7 +167,7 @@ Private Function CleanText(t As String) As String
     Do While InStr(t, "  ") > 0
         t = Replace(t, "  ", " ")
     Loop
-    CleanText = Trim(t)
+    CleanText = Trim$(t)
 End Function
 
 Private Function SafeName(t As String) As String
