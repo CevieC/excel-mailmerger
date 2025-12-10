@@ -1,36 +1,45 @@
 Option Explicit
 
-' === CONFIGURABLE SETTINGS ===
-Private Const ROOT_PATH As String = "C:\ROP_Letters"  ' TODO: change this to your real root folder
+' === USER SETTINGS ===
+Private Const ROOT_PATH As String = "C:\ROP_Letters"   ' <-- CHANGE THIS TO YOUR DIRECTORY
 
-' These must match the column headers in the ROP Letter sheet / MailMerge data source
+' Mail merge field names (these MUST match your ROP Letter headers)
 Private Const FIELD_QUARTER As String = "Quarter"
-Private Const FIELD_STATUS_FOLDER As String = "Active Status"        ' e.g. "Active" / "Terminated"
-Private Const FIELD_CHANNEL_FOLDER As String = "Channel Folder"      ' e.g. "Direct", "Agency", "FA", etc.
-Private Const FIELD_ADVISOR_NAME As String = "Producing Advisor Name"
+Private Const FIELD_STATUS_FOLDER As String = "Active_Status"
+Private Const FIELD_CHANNEL_FOLDER As String = "Channel_Folder"
+Private Const FIELD_ADVISOR_NAME As String = "Producing_Advisor_Name"
 
-' Main macro
-Public Sub LettersToPDF()
+' Excel sheet / header settings
+Private Const EXCEL_SHEET_NAME As String = "ROP Letter"
+Private Const EXCEL_PDF_PATH_HEADER As String = "PDF Path"
+
+' ============================================================
+'   MAIN MACRO – GENERATE PDFS AND WRITE BACK TO EXCEL
+' ============================================================
+
+Public Sub GenerateROPLettersToPDF()
+
     Dim docMain As Document
     Dim docNew As Document
     Dim mm As MailMerge
     Dim ds As MailMergeDataSource
     
     Dim fso As Object
-    Dim advisorLetterCount As Object    ' Dictionary to track numbering per advisor
+    Dim advisorLetterCount As Object
     
     Dim i As Long
-    Dim quarterVal As String
-    Dim statusFolder As String
-    Dim channelFolder As String
-    Dim advisorName As String
-    
-    Dim advisorKey As String
-    Dim letterIndex As Long
+    Dim quarterVal As String, statusFolder As String
+    Dim channelFolder As String, advisorName As String
+    Dim advisorKey As String, letterIndex As Long
     
     Dim targetFolder As String
     Dim pdfFileName As String
     Dim pdfFullPath As String
+    
+    ' Excel objects
+    Dim xlApp As Object, wb As Object, ws As Object
+    Dim pdfCol As Long, lastCol As Long, rowInExcel As Long
+    Dim canLogToExcel As Boolean
     
     On Error GoTo ErrHandler
     
@@ -39,108 +48,143 @@ Public Sub LettersToPDF()
     Set ds = mm.DataSource
     
     If ds.RecordCount = 0 Then
-        MsgBox "No records found in the mail merge data source.", vbExclamation, "Generate ROP Letters"
+        MsgBox "No records found in the mail merge data source.", vbExclamation
         Exit Sub
     End If
     
-    ' File system + advisor counters
+    ' Create filesystem + advisor count dict
     Set fso = CreateObject("Scripting.FileSystemObject")
     Set advisorLetterCount = CreateObject("Scripting.Dictionary")
     
+    canLogToExcel = False
+    
+    On Error Resume Next
+    Set xlApp = GetObject(Class:="Excel.Application")
+    On Error GoTo ErrHandler
+    
+    If Not xlApp Is Nothing Then
+        
+        Set wb = xlApp.Workbooks(ds.Name)     ' workbook name must match mail merge data source file name
+        If Not wb Is Nothing Then
+            
+            Set ws = wb.Worksheets(EXCEL_SHEET_NAME)
+            If Not ws Is Nothing Then
+                
+                ' Find or create PDF Path column
+                pdfCol = 0
+                lastCol = ws.Cells(1, ws.Columns.Count).End(-4159).Column
+                
+                Dim c As Long
+                For c = 1 To lastCol
+                    If Trim(CStr(ws.Cells(1, c).Value)) = EXCEL_PDF_PATH_HEADER Then
+                        pdfCol = c
+                        Exit For
+                    End If
+                Next c
+                
+                If pdfCol = 0 Then
+                    pdfCol = lastCol + 1
+                    ws.Cells(1, pdfCol).Value = EXCEL_PDF_PATH_HEADER
+                End If
+                
+                canLogToExcel = True
+            End If
+        End If
+    End If
+    
     Application.ScreenUpdating = False
+    
+    ' ----------------------------
+    ' PROCESS EACH RECORD
+    ' ----------------------------
     
     With mm
         .Destination = wdSendToNewDocument
         .SuppressBlankLines = True
         
-        ' Loop through each record in the data source
         For i = 1 To ds.RecordCount
+        
             ds.ActiveRecord = i
             
-            ' --- Read values from current record ---
-            quarterVal = Trim(GetDataFieldValue(ds, FIELD_QUARTER))
-            statusFolder = Trim(GetDataFieldValue(ds, FIELD_STATUS_FOLDER))        ' "Active" / "Terminated"
-            channelFolder = Trim(GetDataFieldValue(ds, FIELD_CHANNEL_FOLDER))      ' "Direct", "Agency", "FA", etc.
-            advisorName = Trim(GetDataFieldValue(ds, FIELD_ADVISOR_NAME))
+            ' Read merge fields
+            quarterVal = CleanText(GetDataFieldValue(ds, FIELD_QUARTER))
+            statusFolder = CleanText(GetDataFieldValue(ds, FIELD_STATUS_FOLDER))
+            channelFolder = CleanText(GetDataFieldValue(ds, FIELD_CHANNEL_FOLDER))
+            advisorName = CleanText(GetDataFieldValue(ds, FIELD_ADVISOR_NAME))
             
-            ' Fallbacks to avoid empty pieces
             If quarterVal = "" Then quarterVal = "Unknown Quarter"
             If statusFolder = "" Then statusFolder = "Unknown Status"
             If channelFolder = "" Then channelFolder = "Unknown Channel"
             If advisorName = "" Then advisorName = "Unknown Advisor"
             
-            ' --- Build key for numbering per advisor within this grouping ---
+            ' Counting logic for file numbering
             advisorKey = quarterVal & "|" & statusFolder & "|" & channelFolder & "|" & advisorName
             
             If advisorLetterCount.Exists(advisorKey) Then
-                letterIndex = CLng(advisorLetterCount(advisorKey)) + 1
+                letterIndex = advisorLetterCount(advisorKey) + 1
             Else
                 letterIndex = 1
             End If
             advisorLetterCount(advisorKey) = letterIndex
             
-            ' --- Build folder path ---
-            ' <ROOT>\<Quarter>\<Active Status>\<Channel Folder>\<Producing Advisor Name>\
+            ' Build folder path
             targetFolder = ROOT_PATH & "\" & _
                            SanitizePathComponent(quarterVal) & "\" & _
                            SanitizePathComponent(statusFolder) & "\" & _
-                           SanitizePathComponent(channelFolder) & "\" & _
-                           SanitizePathComponent(advisorName)
+                           SanitizePathComponent(channelFolder)
             
             EnsureFolderExists fso, targetFolder
             
-            ' --- Build PDF file name ---
-            ' <Channel Folder> ROP Letter for <Quarter> - <Producing Advisor Name> <n>.pdf
-            pdfFileName = channelFolder & " ROP Letter for " & quarterVal & " - " & advisorName & " " & CStr(letterIndex) & ".pdf"
+            ' Build PDF filename
+            pdfFileName = channelFolder & " ROP Letter for " & quarterVal & " - " & advisorName & " " & letterIndex & ".pdf"
             pdfFileName = SanitizeFileName(pdfFileName)
             
             pdfFullPath = targetFolder & "\" & pdfFileName
             
-            ' --- Execute merge for this single record ---
+            ' Merge this single record → new document
             .DataSource.FirstRecord = i
             .DataSource.LastRecord = i
-            .Execute Pause:=False   ' creates a new document
+            .Execute Pause:=False
             
             Set docNew = ActiveDocument
             
-            ' --- Export the new document as PDF ---
+            ' Export PDF
             docNew.ExportAsFixedFormat _
                 OutputFileName:=pdfFullPath, _
                 ExportFormat:=wdExportFormatPDF, _
-                OpenAfterExport:=False, _
-                OptimizeFor:=wdExportOptimizeForPrint, _
-                Range:=wdExportAllDocument, _
-                Item:=wdExportDocumentContent, _
-                IncludeDocProps:=True, _
-                KeepIRM:=True, _
-                CreateBookmarks:=wdExportCreateNoBookmarks, _
-                DocStructureTags:=True, _
-                BitmapMissingFonts:=True, _
-                UseISO19005_1:=False
+                OpenAfterExport:=False
             
-            ' Close the merged document without saving
             docNew.Close SaveChanges:=False
             
-            ' Reactivate main template document
+            ' Write into Excel (row = i + 1)
+            If canLogToExcel Then
+                rowInExcel = i + 1
+                ws.Cells(rowInExcel, pdfCol).Value = pdfFullPath
+            End If
+            
             docMain.Activate
         Next i
     End With
     
     Application.ScreenUpdating = True
     
-    MsgBox "ROP letters generated successfully for " & ds.RecordCount & " records.", _
-           vbInformation, "Generate ROP Letters"
+    If canLogToExcel Then wb.Save
     
+    MsgBox "PDF letters generated successfully for " & ds.RecordCount & " records.", vbInformation
     Exit Sub
-    
+
+' Error handler
 ErrHandler:
     Application.ScreenUpdating = True
-    MsgBox "Error during ROP letter generation:" & vbCrLf & Err.Description, _
-           vbCritical, "Generate ROP Letters"
+    MsgBox "Error generating letters:" & vbCrLf & Err.Description, vbCritical
 End Sub
 
-' Safely get a field value (returns "" if field not found)
-Private Function GetDataFieldValue(ByVal ds As MailMergeDataSource, ByVal fieldName As String) As String
+
+' ============================================================
+'                    HELPER FUNCTIONS
+' ============================================================
+
+Private Function GetDataFieldValue(ds As MailMergeDataSource, fieldName As String) As String
     On Error GoTo ErrHandler
     GetDataFieldValue = ds.DataFields(fieldName).Value
     Exit Function
@@ -148,43 +192,45 @@ ErrHandler:
     GetDataFieldValue = ""
 End Function
 
-' Remove invalid filename characters
-Private Function SanitizeFileName(ByVal fileName As String) As String
-    Dim badChars As Variant
-    Dim ch As Variant
-    
-    badChars = Array("\", "/", ":", "*", "?", """", "<", ">", "|")
-    
-    For Each ch In badChars
-        fileName = Replace(fileName, CStr(ch), " ")
-    Next ch
-    
-    fileName = Trim(fileName)
-    SanitizeFileName = fileName
+Private Function CleanText(txt As String) As String
+    txt = Replace(txt, "–", "-")
+    txt = Replace(txt, "—", "-")
+    txt = Replace(txt, vbCr, " ")
+    txt = Replace(txt, vbLf, " ")
+    txt = Replace(txt, vbTab, " ")
+    Do While InStr(txt, "  ") > 0
+        txt = Replace(txt, "  ", " ")
+    Loop
+    CleanText = Trim(txt)
 End Function
 
-' Sanitize folder path component (reuse filename rules)
-Private Function SanitizePathComponent(ByVal part As String) As String
+Private Function SanitizeFileName(fileName As String) As String
+    Dim badChars: badChars = Array("\", "/", ":", "*", "?", """", "<", ">","|")
+    Dim ch
+    For Each ch In badChars
+        fileName = Replace(fileName, ch, " ")
+    Next ch
+    fileName = CleanText(fileName)
+    Do While Right(fileName, 1) = "."
+        fileName = Left(fileName, Len(fileName) - 1)
+    Loop
+    If Trim(fileName) = "" Then fileName = "ROP_Letter"
+    SanitizeFileName = Trim(fileName)
+End Function
+
+Private Function SanitizePathComponent(part As String) As String
     part = SanitizeFileName(part)
     If part = "" Then part = "_"
     SanitizePathComponent = part
 End Function
 
-' Ensure folder (and its parents) exist using FileSystemObject
-Private Sub EnsureFolderExists(ByVal fso As Object, ByVal folderPath As String)
-    Dim parts() As String
-    Dim currentPath As String
+Private Sub EnsureFolderExists(fso As Object, folderPath As String)
+    Dim parts() As String: parts = Split(folderPath, "\")
+    Dim current As String: current = parts(0)
+    
     Dim i As Long
-    
-    If fso.FolderExists(folderPath) Then Exit Sub
-    
-    parts = Split(folderPath, "\")
-    
-    currentPath = parts(0)
     For i = 1 To UBound(parts)
-        currentPath = currentPath & "\" & parts(i)
-        If Not fso.FolderExists(currentPath) Then
-            fso.CreateFolder currentPath
-        End If
+        current = current & "\" & parts(i)
+        If Not fso.FolderExists(current) Then fso.CreateFolder current
     Next i
 End Sub
