@@ -60,11 +60,12 @@ Public Sub BuildROPStaging()
         wsStg.Name = STAGING_SHEET
     End If
     
-    ' Clear only data rows (row 2 onwards) in columns A to J, preserving headers and columns after J
+    ' Clear only data rows (row 2 onwards) in columns A to J and column Z, preserving headers and columns after J (except Z)
     Dim lastStgRow As Long
     lastStgRow = wsStg.Cells(wsStg.Rows.Count, "A").End(xlUp).Row
     If lastStgRow >= 2 Then
         wsStg.Range("A2:J" & lastStgRow).Clear
+        wsStg.Range("Z2:Z" & lastStgRow).Clear
     End If
     
     ' Build master dictionary grouped by Policy Owner ID
@@ -154,6 +155,16 @@ Public Sub BuildROPStaging()
         
         outRow = outRow + 1
     Next k
+    
+    ' Extend formulas from row 2 (columns K to Y) down to last data row
+    Dim lastDataRow As Long
+    lastDataRow = outRow - 1
+    If lastDataRow >= 2 Then
+        ' Check if row 2 has formulas in columns K to Y
+        If wsStg.Range("K2:Y2").HasFormula Then
+            wsStg.Range("K2:Y2").AutoFill Destination:=wsStg.Range("K2:Y" & lastDataRow), Type:=xlFillDefault
+        End If
+    End If
     
     ' Format staging sheet
     With wsStg
